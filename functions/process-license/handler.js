@@ -37,36 +37,45 @@ exports.handler = async function(event, context) {
       }
 
       const json = await res.json();
-      const licenseMeta = json.metafields.find(mf => mf.namespace === "xchange" && mf.key === "licenses");
+      const licenseMeta = json.metafields.find(
+        mf => mf.namespace === "xchange" && mf.key === "licenses"
+      );
 
       if (licenseMeta && licenseMeta.value) {
-        let html = "";
+        let licenses;
 
         try {
-          const data = JSON.parse(licenseMeta.value);
-          if (Array.isArray(data)) {
-            html += "<table border='1' cellpadding='5' cellspacing='0'><thead><tr><th>Product</th><th>Serial</th><th>Download</th></tr></thead><tbody>";
-            data.forEach(item => {
-              html += `<tr>
-                <td>${item.product}</td>
-                <td>${item.serial}</td>
-                <td><a href="${item.download}" target="_blank">Download</a></td>
-              </tr>`;
-            });
-            html += "</tbody></table>";
+          if (typeof licenseMeta.value === "string") {
+            licenses = JSON.parse(licenseMeta.value);
+          } else if (Array.isArray(licenseMeta.value)) {
+            licenses = licenseMeta.value;
           } else {
-            return {
-              statusCode: 500,
-              body: "Expected an array in JSON metafield"
-            };
+            throw new Error("Unexpected metafield value type");
           }
         } catch (err) {
-          console.error("JSON parsing error:", err);
+          console.error("JSON parse error:", err);
           return {
             statusCode: 500,
-            body: "Invalid JSON format in metafield"
+            body: "Failed to parse metafield value as JSON"
           };
         }
+
+        if (!Array.isArray(licenses)) {
+          return {
+            statusCode: 400,
+            body: "Expected metafield to contain a JSON array"
+          };
+        }
+
+        let html = "<table border='1' cellpadding='5' cellspacing='0'><thead><tr><th>Product</th><th>Serial</th><th>Download</th></tr></thead><tbody>";
+        for (const item of licenses) {
+          html += `<tr>
+            <td>${item.product || ""}</td>
+            <td>${item.serial || ""}</td>
+            <td>${item.download ? `<a href="${item.download}" target="_blank">Download</a>` : ""}</td>
+          </tr>`;
+        }
+        html += "</tbody></table>";
 
         const saveRes = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/metafields.json`, {
           method: "POST",
@@ -87,10 +96,10 @@ exports.handler = async function(event, context) {
         });
 
         if (!saveRes.ok) {
-          console.error("Failed to save HTML metafield:", await saveRes.text());
+          console.error("Failed to save metafield:", await saveRes.text());
           return {
             statusCode: 500,
-            body: "Failed to save HTML metafield"
+            body: "Failed to save HTML to licenses_html metafield"
           };
         }
 
@@ -100,7 +109,7 @@ exports.handler = async function(event, context) {
         };
       }
 
-      console.log(`Attempt ${attempt + 1}: licenses metafield not found, retrying...`);
+      console.log(`Attempt ${attempt + 1}: licenses metafield not found yet`);
       await delay(DELAY_MS);
     }
 
